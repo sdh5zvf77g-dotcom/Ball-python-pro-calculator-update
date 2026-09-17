@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<title>Ball Python Pro V36.3</title>
+<title>Ball Python Pro V36.5</title>
 <style>
 :root {
   --bg: #050d09;
@@ -391,7 +391,7 @@ textarea { min-height: 96px; resize: vertical; }
   <header class="head">
     <div class="brand-row">
       <div>
-        <div class="brand">🐍 <span>Ball Python</span> Pro <span style="font-size:12px;font-weight:700;opacity:.85;letter-spacing:0">V36.3</span></div>
+        <div class="brand">🐍 <span>Ball Python</span> Pro <span style="font-size:12px;font-weight:700;opacity:.85;letter-spacing:0">V36.5</span></div>
         <div class="sub" id="bizHeaderLine">Care tracker</div>
       </div>
       <div class="head-actions">
@@ -703,7 +703,7 @@ textarea { min-height: 96px; resize: vertical; }
           Designer and maker of this app<br>
           <b style="color:var(--accent);font-size:16px">Tristan Hall</b>
         </p>
-        <p class="muted" style="margin:10px 0 0;font-size:12px">Ball Python Pro V36.3 · Offline</p>
+        <p class="muted" style="margin:10px 0 0;font-size:12px">Ball Python Pro V36.5 · Offline</p>
       </div>
       <div class="card">
         <h3>Business name</h3>
@@ -722,6 +722,25 @@ textarea { min-height: 96px; resize: vertical; }
           <button type="button" onclick="playAlertBeep()">Test beep</button>
         </div>
       </div>
+
+      <div class="card">
+        <h3>Optional cloud backup</h3>
+        <p class="muted">App stays offline-first. Optionally auto-download a backup file when you open the app, then save that file into <b>iCloud Drive</b> or <b>Google Drive</b> so records survive a lost phone.</p>
+        <p id="cloudBackupStatus" class="muted" style="margin-top:8px">Auto backup: Off</p>
+        <label style="margin-top:10px">Backup every (days)</label>
+        <select id="cloudBackupDays">
+          <option value="1">Every day</option>
+          <option value="3">Every 3 days</option>
+          <option value="7" selected>Every 7 days</option>
+          <option value="14">Every 14 days</option>
+        </select>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" id="cloudBackupToggleBtn" onclick="toggleCloudBackup()">Turn on auto backup</button>
+          <button type="button" class="primary" onclick="exportAll(); markCloudBackupDone();">Backup now</button>
+        </div>
+        <p class="muted" style="margin-top:10px;font-size:12px">iPhone: after download, open the file → Save to Files → iCloud Drive. Android: save into your Google Drive folder.</p>
+      </div>
+
       <div class="card">
         <h3>❤️ Support Ball Python Pro ☕</h3>
         <p style="margin:0;line-height:1.55;color:var(--text)">
@@ -784,6 +803,16 @@ textarea { min-height: 96px; resize: vertical; }
         <p class="muted" style="margin-top:8px">Import adds new snakes or updates existing ones with the same Name.</p>
       </div>
       <div class="card">
+        
+      <div class="card">
+        <h3>Import snake handover</h3>
+        <p class="muted">Buyer: import a handover JSON from a seller to get the snake record and full care history.</p>
+        <input id="handoverImport" type="file" accept=".json,application/json" style="display:none" onchange="importHandoverFile(this.files[0]); this.value='';">
+        <div class="actions" style="margin-top:8px">
+          <button type="button" class="primary" onclick="document.getElementById('handoverImport').click()">Import handover file</button>
+        </div>
+      </div>
+
         <h3>Danger zone</h3>
         <button class="danger" onclick="if(confirm('Delete ALL data? This cannot be undone.')){db={snakes:[],care:[],pairings:[],clutches:[],settings:{version:35}};save();show('dashboard')}">Clear All Data</button>
       </div>
@@ -987,6 +1016,8 @@ function show(v) {
   if (typeof applyLanguage === 'function') applyLanguage();
   if (typeof applyBusinessName === 'function') applyBusinessName();
   if (typeof applyAlertSoundPref === 'function') applyAlertSoundPref();
+  if (typeof applyCloudBackupPref === 'function') applyCloudBackupPref();
+  if (typeof maybeAutoCloudBackup === 'function') maybeAutoCloudBackup();
 }
 
 
@@ -1887,6 +1918,161 @@ function weightSpark(snakeId) {
   }).join('')}</div>`;
 }
 
+
+function isSuccessfulFeedRec(rec) {
+  const r = ((rec.result || '') + ' ' + (rec.notes || '') + ' ' + (rec.value || '')).toLowerCase();
+  if (!r.trim()) return true;
+  if (/\b(refus|regurg|skip|missed|no eat|didn't eat|did not eat|uneaten|left it)\b/.test(r)) return false;
+  if (/\b(ate|fed|accepted|struck|took)\b/.test(r)) return true;
+  return true;
+}
+
+function neonateProgress(snakeId) {
+  const feeds = db.care.filter(c => c.snakeId === snakeId && c.type === 'feed')
+    .sort((a,b) => a.date.localeCompare(b.date));
+  const sheds = db.care.filter(c => c.snakeId === snakeId && c.type === 'shed')
+    .sort((a,b) => a.date.localeCompare(b.date));
+  const firstShed = sheds[0] || null;
+
+  // First 3 consecutive successful meals (chronological from first feed streak)
+  let streak = 0, bestStreak = 0, firstThreeEnd = null, streakDates = [];
+  for (const f of feeds) {
+    if (isSuccessfulFeedRec(f)) {
+      streak++;
+      streakDates.push(f.date);
+      if (streak > bestStreak) bestStreak = streak;
+      if (streak >= 3 && !firstThreeEnd) firstThreeEnd = f.date;
+    } else {
+      streak = 0;
+      streakDates = [];
+    }
+  }
+  // current consecutive successful from most recent
+  const feedsDesc = feeds.slice().reverse();
+  let currentStreak = 0;
+  for (const f of feedsDesc) {
+    if (isSuccessfulFeedRec(f)) currentStreak++;
+    else break;
+  }
+  return {
+    firstShed,
+    successfulFeeds: feeds.filter(isSuccessfulFeedRec).length,
+    bestStreak,
+    currentStreak,
+    firstThreeDone: bestStreak >= 3,
+    firstThreeEnd,
+    saleReady: !!firstShed && bestStreak >= 3
+  };
+}
+
+function neonateCardHtml(s) {
+  const p = neonateProgress(s.id);
+  const shedOk = !!p.firstShed;
+  const feedOk = p.firstThreeDone;
+  const ready = p.saleReady;
+  return `
+    <div class="card" style="border-color:${ready ? 'rgba(34,197,94,.45)' : 'rgba(245,158,11,.35)'}">
+      <h3>Neonatal benchmarks</h3>
+      <p class="muted" style="margin:0 0 10px;font-size:12px">First shed + 3 consecutive successful meals — common checklist before selling hatchlings.</p>
+      <div class="line"><b>First shed</b>${shedOk ? ('✓ Completed · ' + esc(p.firstShed.date)) : '○ Not recorded yet'}</div>
+      <div class="line"><b>3 consecutive feeds</b>${feedOk ? ('✓ Done' + (p.firstThreeEnd ? ' · by ' + esc(p.firstThreeEnd) : '')) : ('○ ' + Math.min(p.bestStreak,3) + ' / 3 consecutive successful')}</div>
+      <div class="line"><b>Current feed streak</b>${p.currentStreak} successful in a row</div>
+      <div class="notice ${ready ? 'ok' : 'warn'}" style="margin-top:10px">${ready ? '✓ Sale-ready benchmarks met (first shed + 3 consecutive feeds).' : 'Still working toward sale-ready benchmarks.'}</div>
+    </div>`;
+}
+
+function buildSnakeHandoverPack(id) {
+  const s = db.snakes.find(x => x.id === id);
+  if (!s) return null;
+  const care = db.care.filter(c => c.snakeId === id).sort((a,b) => a.date.localeCompare(b.date));
+  // strip huge photo arrays optionally keep first photo
+  const snakeCopy = Object.assign({}, s);
+  if (Array.isArray(snakeCopy.photos) && snakeCopy.photos.length > 1) {
+    snakeCopy.photos = snakeCopy.photos.slice(0, 1);
+  }
+  return {
+    type: 'ball_python_pro_handover',
+    version: 36,
+    exportedAt: new Date().toISOString(),
+    from: getBusinessName() || 'Ball Python Pro user',
+    snake: snakeCopy,
+    care: care,
+    neonate: neonateProgress(id)
+  };
+}
+
+function exportSnakeHandover(id) {
+  const pack = buildSnakeHandoverPack(id);
+  if (!pack) return;
+  const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'handover-' + (pack.snake.name || id).replace(/[^\w\-]+/g, '_') + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  alert('Handover file saved. Send this JSON to the buyer so they can import it in Backup → Import handover.');
+}
+
+function showHandoverQR(id) {
+  const pack = buildSnakeHandoverPack(id);
+  if (!pack) return;
+  // QR can only hold limited data — encode a compact summary + instruct file share for full history
+  const compact = 'BPHO|' + (pack.snake.id || '') + '|' + (pack.snake.name || '') + '|' + (pack.snake.genes || '');
+  const morph = [pack.snake.genes, pack.snake.hets ? ('Het ' + pack.snake.hets) : ''].filter(Boolean).join(' · ') || 'No genes';
+  const neo = pack.neonate;
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="sheet" style="text-align:center">
+      <h2>Digital handover</h2>
+      <p style="font-weight:800;margin:0">${esc(pack.snake.name || '')}</p>
+      <p style="color:var(--accent);font-weight:700;margin:6px 0">${esc(morph)}</p>
+      <p class="muted" style="font-size:12px">First shed: ${neo.firstShed ? esc(neo.firstShed.date) : '—'} · 3 feeds: ${neo.firstThreeDone ? 'Yes' : 'Not yet'}</p>
+      <canvas id="handoverQr" style="margin:12px auto;background:#fff;border-radius:12px;max-width:100%"></canvas>
+      <p class="muted" style="font-size:12px;margin-top:8px">QR identifies the snake. For the full care history, use <b>Export handover file</b> and send that JSON to the buyer.</p>
+      <div class="actions" style="margin-top:12px">
+        <button class="primary" onclick="exportSnakeHandover('${id}')">Export handover file</button>
+        <button class="ghost" onclick="this.closest('.overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => drawQR('handoverQr', compact), 50);
+}
+
+function importHandoverFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function() {
+    try {
+      const pack = JSON.parse(reader.result);
+      if (!pack || pack.type !== 'ball_python_pro_handover' || !pack.snake) {
+        alert('Not a valid Ball Python Pro handover file.');
+        return;
+      }
+      if (!confirm('Import snake "' + (pack.snake.name || 'Unknown') + '" with ' + ((pack.care && pack.care.length) || 0) + ' care records?')) return;
+      let snake = pack.snake;
+      // new id to avoid collisions
+      const oldId = snake.id;
+      snake.id = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+      snake.status = snake.status === 'Sold' ? 'Holdback' : (snake.status || 'Holdback');
+      snake.notes = (snake.notes ? snake.notes + '\n' : '') + 'Imported handover ' + (pack.exportedAt || '') + (pack.from ? (' from ' + pack.from) : '');
+      db.snakes.push(snake);
+      (pack.care || []).forEach(c => {
+        const rec = Object.assign({}, c);
+        rec.id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+        rec.snakeId = snake.id;
+        db.care.push(rec);
+      });
+      save();
+      alert('Handover imported.');
+      animalDetail(snake.id);
+    } catch (e) {
+      alert('Could not read handover file.');
+    }
+  };
+  reader.readAsText(file);
+}
+
 function animalDetail(id) {
   const s = db.snakes.find(x => x.id === id);
   if (!s) return;
@@ -1913,8 +2099,11 @@ function animalDetail(id) {
     <div class="actions" style="margin-top:0">
       <button onclick="shareSaleCard('${s.id}')">🏷️ Sale / Share Card</button>
       <button onclick="printSnakeHistory('${s.id}')">🖨️ Print History</button>
+      <button onclick="showHandoverQR('${s.id}')">📦 Handover</button>
       <button class="danger" onclick="deleteAnimal('${s.id}')">Delete</button>
     </div>
+
+    ${neonateCardHtml(s)}
 
     <div class="card">
       <div class="line"><b>Genes / Morph</b>${esc(s.genes || 'Not recorded')}</div>
@@ -3349,6 +3538,79 @@ function saveBulk(btn) {
 }
 
 // ---------- BACKUP ----------
+
+function isCloudBackupEnabled() {
+  return !!(db.settings && db.settings.cloudBackup);
+}
+function getCloudBackupDays() {
+  const n = Number(db.settings && db.settings.cloudBackupDays);
+  return n > 0 ? n : 7;
+}
+function applyCloudBackupPref() {
+  const on = isCloudBackupEnabled();
+  const status = document.getElementById('cloudBackupStatus');
+  const btn = document.getElementById('cloudBackupToggleBtn');
+  const days = document.getElementById('cloudBackupDays');
+  if (status) {
+    const last = db.settings && db.settings.cloudBackupLast;
+    status.textContent = on
+      ? ('Auto backup: On · every ' + getCloudBackupDays() + ' day(s)' + (last ? (' · last ' + last.slice(0,10)) : ''))
+      : 'Auto backup: Off';
+  }
+  if (btn) {
+    btn.textContent = on ? 'Turn off auto backup' : 'Turn on auto backup';
+    btn.className = on ? 'primary' : '';
+  }
+  if (days) days.value = String(getCloudBackupDays());
+}
+function toggleCloudBackup() {
+  if (!db.settings) db.settings = { version: 36 };
+  db.settings.cloudBackup = !isCloudBackupEnabled();
+  const daysEl = document.getElementById('cloudBackupDays');
+  if (daysEl) db.settings.cloudBackupDays = Number(daysEl.value) || 7;
+  save();
+  applyCloudBackupPref();
+}
+function markCloudBackupDone() {
+  if (!db.settings) db.settings = { version: 36 };
+  db.settings.cloudBackupLast = new Date().toISOString();
+  save();
+  applyCloudBackupPref();
+}
+function maybeAutoCloudBackup() {
+  try {
+    if (!isCloudBackupEnabled()) return;
+    const days = getCloudBackupDays();
+    const last = db.settings && db.settings.cloudBackupLast;
+    let due = true;
+    if (last) {
+      const lastMs = Date.parse(last);
+      if (!isNaN(lastMs)) {
+        const elapsed = (Date.now() - lastMs) / (1000 * 60 * 60 * 24);
+        due = elapsed >= days;
+      }
+    }
+    if (!due) return;
+    // Auto download backup when app opens and interval is due
+    setTimeout(function() {
+      try {
+        exportAll();
+        markCloudBackupDone();
+      } catch (e) {}
+    }, 1200);
+  } catch (e) {}
+}
+// Keep days select in sync when changed
+document.addEventListener('change', function(e) {
+  if (e.target && e.target.id === 'cloudBackupDays') {
+    if (!db.settings) db.settings = { version: 36 };
+    db.settings.cloudBackupDays = Number(e.target.value) || 7;
+    save();
+    applyCloudBackupPref();
+  }
+});
+
+
 function exportAll() {
   const blob = new Blob([JSON.stringify({
     app: 'Ball Python Pro',
@@ -3359,9 +3621,10 @@ function exportAll() {
   const u = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = u;
-  a.download = `naga-exotics-backup-${today()}.json`;
+  a.download = `ball-python-pro-backup-${today()}.json`;
   a.click();
   URL.revokeObjectURL(u);
+  if (typeof markCloudBackupDone === 'function') markCloudBackupDone();
 }
 
 $('restore').onchange = e => {
@@ -3599,6 +3862,8 @@ _ready.then(() => {
   applyLanguage();
   if (typeof applyBusinessName === 'function') applyBusinessName();
   if (typeof applyAlertSoundPref === 'function') applyAlertSoundPref();
+  if (typeof applyCloudBackupPref === 'function') applyCloudBackupPref();
+  if (typeof maybeAutoCloudBackup === 'function') maybeAutoCloudBackup();
   const sel = document.getElementById('langSelect');
   if (sel) sel.value = (db.settings && db.settings.lang) || 'en';
 }).catch(() => {
@@ -3606,6 +3871,8 @@ _ready.then(() => {
   applyLanguage();
   if (typeof applyBusinessName === 'function') applyBusinessName();
   if (typeof applyAlertSoundPref === 'function') applyAlertSoundPref();
+  if (typeof applyCloudBackupPref === 'function') applyCloudBackupPref();
+  if (typeof maybeAutoCloudBackup === 'function') maybeAutoCloudBackup();
 });
 </script>
 </body>
