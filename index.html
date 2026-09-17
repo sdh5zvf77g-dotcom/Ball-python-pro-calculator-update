@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<title>Ball Python Pro V36.6</title>
+<title>Ball Python Pro V36.7</title>
 <style>
 :root {
   --bg: #050d09;
@@ -391,7 +391,7 @@ textarea { min-height: 96px; resize: vertical; }
   <header class="head">
     <div class="brand-row">
       <div>
-        <div class="brand">🐍 <span>Ball Python</span> Pro <span style="font-size:12px;font-weight:700;opacity:.85;letter-spacing:0">V36.6</span></div>
+        <div class="brand">🐍 <span>Ball Python</span> Pro <span style="font-size:12px;font-weight:700;opacity:.85;letter-spacing:0">V36.7</span></div>
         <div class="sub" id="bizHeaderLine">Care tracker</div>
       </div>
       <div class="head-actions">
@@ -703,7 +703,7 @@ textarea { min-height: 96px; resize: vertical; }
           Designer and maker of this app<br>
           <b style="color:var(--accent);font-size:16px">Tristan Hall</b>
         </p>
-        <p class="muted" style="margin:10px 0 0;font-size:12px">Ball Python Pro V36.6 · Offline</p>
+        <p class="muted" style="margin:10px 0 0;font-size:12px">Ball Python Pro V36.7 · Offline</p>
       </div>
       <div class="card">
         <h3>Business name</h3>
@@ -1967,8 +1967,34 @@ function neonateProgress(snakeId) {
     saleReady: !!firstShed && bestStreak >= 3
   };
 }
+function neonateSaleReady(s) {
+  if (getSnakeWeightG(s) > 300) return true;
+  return neonateProgress(s.id).saleReady;
+}
+
+function getSnakeWeightG(s) {
+  let w = Number(s && s.weight);
+  if (!isNaN(w) && w > 0) return w;
+  // fall back to latest weight care log
+  const last = db.care.filter(c => c.snakeId === s.id && c.type === 'weight')
+    .sort((a,b) => b.date.localeCompare(a.date))[0];
+  if (last) {
+    w = Number(String(last.value || last.result || '').replace(/[^\d.]/g, ''));
+    if (!isNaN(w) && w > 0) return w;
+  }
+  return 0;
+}
 
 function neonateCardHtml(s) {
+  const weightG = getSnakeWeightG(s);
+  // Over 300g: skip neonatal hatchling checklist
+  if (weightG > 300) {
+    return `
+    <div class="card" style="border-color:rgba(34,197,94,.35)">
+      <h3>Neonatal benchmarks</h3>
+      <div class="notice ok" style="margin:0">Bypassed — weight ${Math.round(weightG)} g (over 300 g). Hatchling first-shed / 3-feed checklist does not apply.</div>
+    </div>`;
+  }
   const p = neonateProgress(s.id);
   const shedOk = !!p.firstShed;
   const feedOk = p.firstThreeDone;
@@ -1976,7 +2002,7 @@ function neonateCardHtml(s) {
   return `
     <div class="card" style="border-color:${ready ? 'rgba(34,197,94,.45)' : 'rgba(245,158,11,.35)'}">
       <h3>Neonatal benchmarks</h3>
-      <p class="muted" style="margin:0 0 10px;font-size:12px">First shed + 3 consecutive successful meals — common checklist before selling hatchlings.</p>
+      <p class="muted" style="margin:0 0 10px;font-size:12px">First shed + 3 consecutive successful meals — common checklist before selling hatchlings. Automatically skipped when weight is over 300 g.</p>
       <div class="line"><b>First shed</b>${shedOk ? ('✓ Completed · ' + esc(p.firstShed.date)) : '○ Not recorded yet'}</div>
       <div class="line"><b>3 consecutive feeds</b>${feedOk ? ('✓ Done' + (p.firstThreeEnd ? ' · by ' + esc(p.firstThreeEnd) : '')) : ('○ ' + Math.min(p.bestStreak,3) + ' / 3 consecutive successful')}</div>
       <div class="line"><b>Current feed streak</b>${p.currentStreak} successful in a row</div>
