@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-<title>Ball Python Pro V36.1</title>
+<title>Ball Python Pro V36.3</title>
 <style>
 :root {
   --bg: #050d09;
@@ -391,7 +391,7 @@ textarea { min-height: 96px; resize: vertical; }
   <header class="head">
     <div class="brand-row">
       <div>
-        <div class="brand">🐍 <span>Ball Python</span> Pro <span style="font-size:12px;font-weight:700;opacity:.85;letter-spacing:0">V36.1</span></div>
+        <div class="brand">🐍 <span>Ball Python</span> Pro <span style="font-size:12px;font-weight:700;opacity:.85;letter-spacing:0">V36.3</span></div>
         <div class="sub" id="bizHeaderLine">Care tracker</div>
       </div>
       <div class="head-actions">
@@ -703,7 +703,7 @@ textarea { min-height: 96px; resize: vertical; }
           Designer and maker of this app<br>
           <b style="color:var(--accent);font-size:16px">Tristan Hall</b>
         </p>
-        <p class="muted" style="margin:10px 0 0;font-size:12px">Ball Python Pro V36.1 · Offline</p>
+        <p class="muted" style="margin:10px 0 0;font-size:12px">Ball Python Pro V36.3 · Offline</p>
       </div>
       <div class="card">
         <h3>Business name</h3>
@@ -1507,7 +1507,8 @@ window.addEventListener('focus', function() {
 
 
 function dash() {
-  const ss = db.snakes;
+  const ss = db.snakes.filter(s => s.status !== 'Sold');
+  const soldCount = db.snakes.filter(s => s.status === 'Sold').length;
   const males = ss.filter(s => s.sex === 'Male').length;
   const females = ss.filter(s => s.sex === 'Female').length;
   const forSale = ss.filter(s => s.status === 'For Sale').length;
@@ -1518,6 +1519,7 @@ function dash() {
     <div class="stat"><strong>${males}</strong><span>${t('males')}</span></div>
     <div class="stat"><strong>${females}</strong><span>${t('females')}</span></div>
     <div class="stat accent"><strong>${activeClutches}</strong><span>${t('active_clutches')}</span></div>
+    ${soldCount ? `<div class="stat" style="grid-column:1/-1;opacity:.85"><strong>${soldCount}</strong><span>Sold (not in collection count)</span></div>` : ''}
   `;
 
   // Alerts
@@ -1683,30 +1685,63 @@ function renderAnimals() {
   const g = $('agene').value;
   const sort = $('asort').value;
 
-  let a = db.snakes.filter(s => {
+  function matchFilters(s, includeSold) {
+    if (!includeSold && s.status === 'Sold' && st !== 'Sold') return false;
+    if (st === 'Sold' && s.status !== 'Sold') return false;
+    if (st && st !== 'Sold' && s.status !== st) return false;
     if (q && !(s.name + ' ' + (s.genes||'') + ' ' + (s.hets||'') + ' ' + (s.notes||'') + ' ' + (s.location||'')).toLowerCase().includes(q)) return false;
     if (sex && s.sex !== sex) return false;
-    if (st && s.status !== st) return false;
     if (g && !(s.genes||'').toLowerCase().includes(g.toLowerCase())) return false;
     return true;
-  });
-
-  if (sort === 'name') a.sort((x,y) => (x.name||'').localeCompare(y.name||''));
-  if (sort === 'weight') a.sort((x,y) => (Number(y.weight)||0) - (Number(x.weight)||0));
-  if (sort === 'new') a = a.slice().reverse();
-  if (sort === 'fed') {
-    a.sort((x,y) => {
-      const lx = lastCare(x.id, 'feed')?.date || '';
-      const ly = lastCare(y.id, 'feed')?.date || '';
-      return ly.localeCompare(lx);
-    });
   }
 
-  $('animalList').innerHTML = a.length ? a.map(animalCard).join('') :
-    '<div class="empty"><div class="big">🐍</div><h3>No snakes found</h3><p>Add your first snake to get started.</p></div>';
+  function sortList(a) {
+    if (sort === 'name') a.sort((x,y) => (x.name||'').localeCompare(y.name||''));
+    if (sort === 'weight') a.sort((x,y) => (Number(y.weight)||0) - (Number(x.weight)||0));
+    if (sort === 'new') a = a.slice().reverse();
+    if (sort === 'fed') {
+      a.sort((x,y) => {
+        const lx = lastCare(x.id, 'feed')?.date || '';
+        const ly = lastCare(y.id, 'feed')?.date || '';
+        return ly.localeCompare(lx);
+      });
+    }
+    return a;
+  }
 
-  // Gene filter options
-  const genes = [...new Set(db.snakes.flatMap(s => (s.genes||'').split(/[,\s\/]+/).map(x => x.trim()).filter(Boolean)))].sort();
+  // If user filters specifically to Sold, only show sold
+  if (st === 'Sold') {
+    let sold = sortList(db.snakes.filter(s => matchFilters(s, true)));
+    $('animalList').innerHTML = sold.length
+      ? `<div class="card" style="margin-bottom:12px;border-color:rgba(239,68,68,.35)"><div class="section-title"><h3>Sold (${sold.length})</h3></div>${sold.map(animalCard).join('')}</div>`
+      : '<div class="empty"><div class="big">🐍</div><h3>No sold snakes found</h3></div>';
+  } else {
+    let active = sortList(db.snakes.filter(s => matchFilters(s, false)));
+    // Sold box only when not filtering to another status, and there are sold matches
+    let sold = [];
+    if (!st) {
+      sold = sortList(db.snakes.filter(s => s.status === 'Sold' && matchFilters({...s, status: 'Holdback'}, true) && (!q || (s.name + ' ' + (s.genes||'') + ' ' + (s.hets||'') + ' ' + (s.notes||'') + ' ' + (s.location||'')).toLowerCase().includes(q)) && (!sex || s.sex === sex) && (!g || (s.genes||'').toLowerCase().includes(g.toLowerCase()))));
+    }
+    let html = '';
+    if (active.length) {
+      html += active.map(animalCard).join('');
+    } else if (!sold.length) {
+      html = '<div class="empty"><div class="big">🐍</div><h3>No snakes found</h3><p>Add your first snake to get started.</p></div>';
+    } else {
+      html = '<div class="muted" style="margin-bottom:10px">No active snakes match this filter.</div>';
+    }
+    if (sold.length) {
+      html += `<div class="card" style="margin-top:14px;border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.06)">
+        <div class="section-title"><h3 style="color:#fca5a5">Sold (${sold.length})</h3></div>
+        <p class="muted" style="margin:0 0 10px;font-size:12px">Sold snakes are kept for history and are not counted in your collection total.</p>
+        ${sold.map(animalCard).join('')}
+      </div>`;
+    }
+    $('animalList').innerHTML = html;
+  }
+
+  // Gene filter options (from active collection mainly, but keep all for search)
+  const genes = [...new Set(db.snakes.filter(s=>s.status!=='Sold').flatMap(s => (s.genes||'').split(/[,\s\/]+/).map(x => x.trim()).filter(Boolean)))].sort();
   const old = $('agene').value;
   $('agene').innerHTML = '<option value="">All genes</option>' + genes.map(g => `<option>${esc(g)}</option>`).join('');
   if (genes.includes(old)) $('agene').value = old;
@@ -2218,14 +2253,18 @@ function showQR(id) {
   const s = db.snakes.find(x => x.id === id);
   if (!s) return;
   const text = 'BPPRO|' + s.id + '|' + (s.name || '') + '|' + (s.genes || '');
+  const morph = [s.genes, s.hets ? ('Het ' + s.hets) : ''].filter(Boolean).join(' · ') || 'No genes listed';
+  const sexLine = [s.sex, s.status].filter(Boolean).join(' · ');
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `
     <div class="sheet" style="text-align:center">
       <h2>QR Label</h2>
-      <p class="muted">${esc(s.name)}</p>
+      <p style="margin:0;font-weight:800;font-size:18px">${esc(s.name || 'Unnamed')}</p>
+      ${sexLine ? `<p class="muted" style="margin:4px 0 0;font-size:12px">${esc(sexLine)}</p>` : ''}
       <canvas id="qrcanvas" style="margin:12px auto;background:#fff;border-radius:12px;max-width:100%"></canvas>
-      <p class="muted" style="font-size:12px;margin-top:8px">Screenshot for tub labels. Scan inside the app (Snakes → Scan QR) to open this snake.</p>
+      <p style="margin:10px 0 0;font-weight:700;font-size:15px;color:var(--accent);line-height:1.35">${esc(morph)}</p>
+      <p class="muted" style="font-size:12px;margin-top:10px">Screenshot for tub labels. Scan inside the app (Snakes → Scan QR) to open this snake.</p>
       <div class="actions" style="margin-top:14px">
         <button class="ghost" onclick="this.closest('.overlay').remove()">Close</button>
       </div>
